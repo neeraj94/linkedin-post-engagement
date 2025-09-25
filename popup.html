@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {
+            width: 350px;
+            min-height: 400px;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            margin: 0;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h2 {
+            color: #0077b5;
+            margin: 0;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        textarea, input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        #urlList {
+            height: 120px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .start-btn {
+            background-color: #0077b5;
+            color: white;
+        }
+        .start-btn:hover {
+            background-color: #005885;
+        }
+        .start-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .stop-btn {
+            background-color: #d93025;
+            color: white;
+        }
+        .stop-btn:hover {
+            background-color: #b52d20;
+        }
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .status.idle {
+            background-color: #f0f0f0;
+            color: #666;
+        }
+        .status.running {
+            background-color: #e8f4f8;
+            color: #0077b5;
+        }
+        .status.error {
+            background-color: #fce8e6;
+            color: #d93025;
+        }
+        .progress {
+            margin-top: 10px;
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>LinkedIn Auto Commenter</h2>
+    </div>
+    
+    <div class="form-group">
+        <label for="commentText">Comment Text:</label>
+        <textarea id="commentText" placeholder="Enter the comment you want to post on LinkedIn posts..."></textarea>
+    </div>
+    
+    <div class="form-group">
+        <label for="urlList">LinkedIn Post URLs (one per line):</label>
+        <textarea id="urlList" placeholder="https://www.linkedin.com/posts/...&#10;https://www.linkedin.com/posts/...&#10;..."></textarea>
+    </div>
+    
+    <div class="button-group">
+        <button id="startBtn" class="start-btn">Start Automation</button>
+        <button id="stopBtn" class="stop-btn" style="display: none;">Stop</button>
+    </div>
+    
+    <div id="status" class="status idle">Ready to start</div>
+    <div id="progress" class="progress"></div>
+    
+    <script src="popup.js"></script>
+</body>
+</html>
