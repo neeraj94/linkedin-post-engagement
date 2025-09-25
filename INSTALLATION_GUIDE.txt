@@ -1,0 +1,64 @@
+CHROME EXTENSION INSTALLATION GUIDE
+=====================================
+
+LinkedIn Auto Commenter Chrome Extension
+
+STEP 1: Download the Extension Files
+-----------------------------------
+All extension files are available at: http://your-replit-url:5000
+Download these files to a folder on your computer:
+- manifest.json
+- popup.html
+- popup.js
+- background.js
+- content.js
+- icon16.png
+- icon48.png  
+- icon128.png
+
+STEP 2: Install in Chrome
+-------------------------
+1. Open Google Chrome
+2. Go to chrome://extensions/ (type this in the address bar)
+3. Enable "Developer mode" by clicking the toggle in the top-right corner
+4. Click "Load unpacked" button
+5. Select the folder containing all the extension files
+6. The extension should now appear in your extensions list
+
+STEP 3: Using the Extension
+---------------------------
+1. Click the extension icon in your browser toolbar (LC icon)
+2. Enter your comment text in the "Comment Text" field
+3. Paste LinkedIn post URLs (one per line) in the "LinkedIn Post URLs" field
+   - URLs should be in format: https://www.linkedin.com/posts/...
+4. Click "Start Automation" to begin
+5. The extension will:
+   - Open each LinkedIn post in sequence  
+   - Check if already liked/commented
+   - Like the post (if not already liked)
+   - Add your comment (if not already commented)
+   - Move to the next post
+
+STEP 4: Monitor Progress
+------------------------
+- Watch the status updates in the popup
+- Extension badge shows progress (● = running, ! = error)
+- Hover over the extension icon to see current status
+- Click "Stop" anytime to halt the automation
+
+IMPORTANT NOTES:
+================
+- Use responsibly and respect LinkedIn's terms of service
+- Don't run automation too frequently to avoid being flagged
+- The extension will skip posts you've already liked or commented on
+- Make sure you're logged into LinkedIn before starting
+- Keep the LinkedIn tab active for best results
+
+TROUBLESHOOTING:
+================
+- If posts don't load: Check your internet connection and LinkedIn login
+- If comments don't post: Verify LinkedIn's comment interface hasn't changed
+- If automation stops: Check the extension badge for error indicators
+- Clear the extension data by disabling and re-enabling if needed
+
+For support, check the browser console (F12) for any error messages.
