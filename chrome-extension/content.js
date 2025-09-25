@@ -134,8 +134,14 @@ async function tryLikePost() {
                         className: button.className
                     });
                     
-                    // Check if this is a like button that hasn't been pressed
-                    if (ariaPressed === 'false' || (!ariaPressed && ariaLabel && ariaLabel.toLowerCase().includes('like'))) {
+                    // Check if this is a like button - look for both pressed and unpressed states
+                    if (ariaLabel && ariaLabel.toLowerCase().includes('like')) {
+                        // Check if already liked
+                        if (ariaPressed === 'true' || ariaLabel.toLowerCase().includes('unlike') || 
+                            button.classList.contains('active') || button.classList.contains('selected')) {
+                            console.log('Post already liked - skipping');
+                            return 'already liked, ';
+                        }
                         likeButton = button;
                         console.log('Found like button:', button);
                         break;
@@ -148,14 +154,8 @@ async function tryLikePost() {
         }
         
         if (likeButton) {
-            // Double check if already liked
-            const ariaPressed = likeButton.getAttribute('aria-pressed');
-            const ariaLabel = likeButton.getAttribute('aria-label');
-            
-            if (ariaPressed === 'true' || (ariaLabel && ariaLabel.toLowerCase().includes('unlike'))) {
-                console.log('Post already liked');
-                return 'already liked, ';
-            }
+            // Double check if already liked - this check was already done above
+            // Just proceed with clicking
             
             console.log('Clicking like button...');
             likeButton.click();
@@ -311,15 +311,39 @@ async function tryCommentPost(commentText) {
             return 'comment input not found';
         }
         
-        // Check if we already commented
+        // Check if we already commented - look more comprehensively
         console.log('Checking for existing comments...');
-        const existingComments = document.querySelectorAll('[data-test-id="comment"], .comment-item, .comments-comment-item');
-        const shortCommentText = commentText.substring(0, 50);
-        for (const comment of existingComments) {
-            if (comment.textContent.includes(shortCommentText)) {
-                console.log('Already commented with this text');
-                return 'already commented';
+        const existingCommentSelectors = [
+            '[data-test-id="comment"]',
+            '.comment-item', 
+            '.comments-comment-item',
+            '.comment-entity',
+            '.social-comment-entity',
+            '.feed-shared-comment',
+            '.comments-comment-v2'
+        ];
+        
+        const shortCommentText = commentText.substring(0, 30).toLowerCase().trim();
+        let foundExistingComment = false;
+        
+        for (const selector of existingCommentSelectors) {
+            const comments = document.querySelectorAll(selector);
+            console.log(`Checking ${comments.length} existing comments with selector: ${selector}`);
+            
+            for (const comment of comments) {
+                const commentContent = comment.textContent.toLowerCase().trim();
+                if (commentContent.includes(shortCommentText)) {
+                    console.log('Found existing comment with matching text:', commentContent.substring(0, 100));
+                    foundExistingComment = true;
+                    break;
+                }
             }
+            if (foundExistingComment) break;
+        }
+        
+        if (foundExistingComment) {
+            console.log('Already commented with this text - skipping');
+            return 'already commented';
         }
         
         // Focus and add the comment

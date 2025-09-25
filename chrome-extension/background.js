@@ -1,7 +1,7 @@
 // Use chrome.storage to persist state across service worker suspensions
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     if (message.action === 'startAutomation') {
-        startAutomation(message.comment, message.urls);
+        startAutomation(message.comment, message.urls, message.minDelay, message.maxDelay);
     } else if (message.action === 'stopAutomation') {
         stopAutomation();
     } else if (message.action === 'postProcessed') {
@@ -12,7 +12,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     }
 });
 
-async function startAutomation(comment, urls) {
+async function startAutomation(comment, urls, minDelay = 2, maxDelay = 5) {
     const state = await getStoredState();
     if (state.isRunning) {
         return;
@@ -24,16 +24,21 @@ async function startAutomation(comment, urls) {
         urls: urls,
         currentIndex: 0,
         tabId: null,
-        startTime: Date.now()
+        startTime: Date.now(),
+        minDelay: minDelay,
+        maxDelay: maxDelay,
+        activityLog: []
     };
 
     await saveState(newState);
+    await logMessage(`Starting automation with ${urls.length} URLs and ${minDelay}-${maxDelay}s delay`, 'success');
     
     try {
         await processNextUrl();
     } catch (error) {
         console.error('Automation error:', error);
         await notifyError('Automation error: ' + error.message);
+        await logMessage('Automation error: ' + error.message, 'error');
         await stopAutomation();
     }
 }
@@ -102,9 +107,12 @@ async function handlePostProcessed(message) {
     const newIndex = state.currentIndex + 1;
     await saveState({...state, currentIndex: newIndex});
     
-    // Use chrome.alarms for reliable timing
+    // Use chrome.alarms for reliable timing with random delay
+    const randomDelay = getRandomDelay(state.minDelay || 2, state.maxDelay || 5);
+    await logMessage(`Waiting ${randomDelay}s before next post...`, 'info');
+    
     chrome.alarms.clear('nextPost');
-    chrome.alarms.create('nextPost', {delayInMinutes: 0.033}); // 2 seconds
+    chrome.alarms.create('nextPost', {delayInMinutes: randomDelay / 60}); // Convert seconds to minutes
 }
 
 async function stopAutomation() {
@@ -216,4 +224,38 @@ async function notifyError(message) {
     }
     
     await notifyPopup({action: 'automationError', error: message});
+}
+
+// Helper function to generate random delay between min and max seconds
+function getRandomDelay(minDelay, maxDelay) {
+    return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+}
+
+// Helper function to log messages to activity log and popup
+async function logMessage(message, type = 'info') {
+    const state = await getStoredState();
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = {
+        timestamp: timestamp,
+        message: message,
+        type: type
+    };
+    
+    // Add to activity log
+    const activityLog = state.activityLog || [];
+    activityLog.push(logEntry);
+    
+    // Keep only last 50 log entries
+    if (activityLog.length > 50) {
+        activityLog.shift();
+    }
+    
+    await saveState({...state, activityLog: activityLog});
+    
+    // Send to popup if it's open
+    await notifyPopup({
+        action: 'logMessage',
+        message: message,
+        type: type
+    });
 }
