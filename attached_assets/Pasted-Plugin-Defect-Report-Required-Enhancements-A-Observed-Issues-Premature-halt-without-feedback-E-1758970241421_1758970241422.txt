@@ -1,0 +1,144 @@
+Plugin: Defect Report & Required Enhancements
+A. Observed Issues
+
+Premature halt without feedback
+
+Execution stops after processing a few URLs and does not continue.
+
+No alert, toast, or log entry explains the halt.
+
+Duplicate commenting by the same logged-in user
+
+The plugin posts a new comment even when the same logged-in account has already commented on the post.
+
+This violates the intended strict skip rule.
+
+Insufficient execution visibility
+
+UI only shows counts (e.g., “URLs found”, “logged-in URLs found”).
+
+There is no per-URL, per-action trace (opened/liked/commented/skipped) visible to the user.
+
+Errors not surfaced
+
+Authentication or runtime errors (e.g., session expiry, rate limits, DOM changes) are not clearly logged or shown in the UI.
+
+B. Required Fixes & Enhancements
+1) Reliability & Progression
+
+Implement a watchdog/timeout per URL (configurable, e.g., 15–60s). If no action completes within the timeout:
+
+Log a WARN/ERROR with the URL and the last known step.
+
+Skip to the next URL after a bounded retry (e.g., up to 2 retries with exponential backoff).
+
+Ensure the run continues through all URLs regardless of individual failures.
+
+2) Strict Idempotency (Skip Rules)
+
+Before attempting any action on a post:
+
+Like check: If already liked by the logged-in account → skip like.
+
+Comment check: If the logged-in account has any existing comment on the post → skip comment.
+
+Apply the following matrix:
+
+Neither liked nor commented → Like + Comment.
+
+Liked only → Comment only.
+
+Commented only → Like only.
+
+Both present → Skip entirely.
+
+Add defensive double-checks (e.g., confirm state after action; if action didn’t “stick”, retry once, then log and continue).
+
+3) Per-URL Execution Trace (UI & Logs)
+
+For each URL, output a structured, real-time trace in the UI:
+
+Opened: <URL>
+
+Skipped Like: already liked
+
+Skipped Comment: already commented by <account>
+
+Liked: <URL>
+
+Commented: <URL>
+
+Error: <URL> | <error_code> | <message> (attempt X/Y)
+
+On completion: Done: <URL>
+
+Also provide a run summary at the end:
+
+Total URLs, Processed, Liked, Commented, Skipped (with reasons), Failed.
+
+4) Error Handling & Diagnostics
+
+Standardize error codes (examples):
+AUTH_401, AUTH_EXPIRED, RATE_LIMIT, NETWORK_TIMEOUT, DOM_NOT_FOUND, ACTION_VERIFICATION_FAILED.
+
+Show a concise UI alert/toast for critical failures (e.g., not logged in), and keep full details in the log panel.
+
+Include timestamps, attempt counters, and URL context in every log line.
+
+Provide an option to export logs (CSV/JSON) from the UI.
+
+C. UI/UX Enhancements (Visibility & Control)
+
+Interactive status panel with live streaming logs; filters (All/Success/Skipped/Errors).
+
+Progress bar + counters: processed / total, successes, skips, errors.
+
+Current URL indicator (clickable to open in a new tab).
+
+Controls: Pause/Resume, Stop, “Dry-Run” (detect only, no actions).
+
+Inputs (clearly labeled with tooltips):
+
+Comment text (single source of truth).
+
+Random delay Min–Max (seconds).
+
+Per-URL timeout.
+
+Retry limit and backoff strategy.
+
+Display the logged-in LinkedIn account name/avatar to avoid confusion.
+
+Provide success/failure toasts for run start/finish, with a link to the summary.
+
+D. Acceptance Criteria (Testable)
+
+Continuity: Given 50 valid LinkedIn post URLs with mixed states, the run finishes without halting, producing a per-URL trace and final summary.
+
+Idempotency: The plugin never posts a new comment when the same logged-in user has an existing comment on that post; it never re-likes an already liked post.
+
+Matrix behavior:
+
+Unliked & uncommented → both actions performed exactly once.
+
+Liked only → only comment is added.
+
+Commented only → only like is added.
+
+Both present → skipped with reason displayed.
+
+Visibility: For every URL, the UI shows Opened / Liked / Commented / Skipped / Error messages with timestamps.
+
+Error surfacing: Authentication expiry triggers a visible alert and a logged AUTH_EXPIRED error; the run either pauses with a prompt or aborts gracefully with a summary.
+
+Logging: Logs are exportable and include URL, action, status, code, message, timestamp, and attempt count.
+
+Delays: Actions respect the configured random delay window.
+
+E. Non-Functional Requirements
+
+Resilience: DOM variation tolerant; bounded retries with backoff.
+
+Performance: Sequential processing with delay; UI remains responsive.
+
+Compliance: Honor skip rules and user controls; avoid excessive requests that could trigger platform throttling.

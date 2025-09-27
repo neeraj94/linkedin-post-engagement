@@ -1,56 +1,293 @@
-// Content script for LinkedIn post automation
+// Enhanced content script for LinkedIn post automation with strict idempotency
 let isProcessing = false;
+let processingTimeout = null;
+
+// Enhanced error codes matching background script
+const ERROR_CODES = {
+    AUTH_401: 'AUTH_401',
+    AUTH_EXPIRED: 'AUTH_EXPIRED', 
+    RATE_LIMIT: 'RATE_LIMIT',
+    NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
+    DOM_NOT_FOUND: 'DOM_NOT_FOUND',
+    ACTION_VERIFICATION_FAILED: 'ACTION_VERIFICATION_FAILED',
+    ALREADY_PROCESSED: 'ALREADY_PROCESSED'
+};
 
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     if (message.action === 'processPost') {
         console.log('Content script received processPost message:', message);
-        processLinkedInPost(message.comment, message.index);
+        processLinkedInPost(message.comment, message.index, message.urlTimeout || 30, message.dryRun || false);
     }
 });
 
-async function processLinkedInPost(commentText, index) {
+async function processLinkedInPost(commentText, index, timeout = 30, dryRun = false) {
     if (isProcessing) {
         console.log('Already processing, skipping...');
         return;
     }
     
     isProcessing = true;
-    console.log('Starting to process LinkedIn post...');
+    console.log(`Starting to process LinkedIn post with ${timeout}s timeout...`);
+    
+    // Set up timeout for this processing
+    processingTimeout = setTimeout(() => {
+        console.error('Processing timeout reached');
+        sendResult({
+            error: `Processing timeout after ${timeout}s`,
+            errorCode: ERROR_CODES.NETWORK_TIMEOUT,
+            skipped: true
+        });
+        isProcessing = false;
+    }, timeout * 1000);
     
     try {
-        // Wait for page to load - try multiple selectors for different LinkedIn page types
+        // Wait for page to load
         console.log('Waiting for page to load...');
         await waitForLinkedInPage();
         
-        let status = '';
+        // Check current like and comment status with strict idempotency
+        console.log('Checking current post status for idempotency...');
+        const currentStatus = await checkCurrentPostStatus(commentText);
+        console.log('Current post status:', currentStatus);
         
-        // Try to like the post
-        console.log('Attempting to like post...');
-        const likeResult = await tryLikePost();
-        status += likeResult;
-        console.log('Like result:', likeResult);
+        // Implement strict idempotency matrix
+        const result = await processAccordingToMatrix(currentStatus, commentText, dryRun);
         
-        // Try to comment on the post
-        console.log('Attempting to comment on post...');
-        const commentResult = await tryCommentPost(commentText);
-        status += commentResult;
-        console.log('Comment result:', commentResult);
-        
-        // Send result back to background script
-        chrome.runtime.sendMessage({
-            action: 'postProcessed',
-            status: status || 'completed'
-        });
+        sendResult(result);
         
     } catch (error) {
         console.error('Error processing post:', error);
-        chrome.runtime.sendMessage({
-            action: 'postProcessed',
-            status: 'error: ' + error.message
+        sendResult({
+            error: error.message,
+            errorCode: ERROR_CODES.DOM_NOT_FOUND,
+            skipped: true
         });
     } finally {
+        if (processingTimeout) {
+            clearTimeout(processingTimeout);
+            processingTimeout = null;
+        }
         isProcessing = false;
     }
+}
+
+// Helper function to send results back to background script
+function sendResult(result) {
+    chrome.runtime.sendMessage({
+        action: 'postProcessed',
+        status: result.status || 'processed',
+        liked: result.liked || false,
+        commented: result.commented || false,
+        skipped: result.skipped || false,
+        reason: result.reason || null,
+        error: result.error || null,
+        errorCode: result.errorCode || null
+    });
+}
+
+// Check current like and comment status for strict idempotency
+async function checkCurrentPostStatus(commentText) {
+    const status = {
+        isLiked: false,
+        hasCommented: false,
+        postContainer: null
+    };
+    
+    // Find the post container first
+    const postSelectors = [
+        '[data-test-id="feed-shared-update-v2"]',
+        '.feed-shared-update-v2', 
+        '.share-update-v2',
+        '.single-post-view',
+        '[data-urn*="activity:"]',
+        'article[data-urn]'
+    ];
+    
+    for (const selector of postSelectors) {
+        const container = document.querySelector(selector);
+        if (container) {
+            status.postContainer = container;
+            console.log('Found post container:', selector);
+            break;
+        }
+    }
+    
+    if (!status.postContainer) {
+        status.postContainer = document;
+        console.log('Using document as fallback container');
+    }
+    
+    // Check like status
+    status.isLiked = await checkLikeStatus(status.postContainer);
+    
+    // Check comment status  
+    status.hasCommented = await checkCommentStatus(status.postContainer, commentText);
+    
+    return status;
+}
+
+// Enhanced like status detection
+async function checkLikeStatus(container) {
+    const likeSelectors = [
+        'button[aria-label*="Like"][aria-pressed="true"]',
+        'button[aria-label*="unlike" i]', // "Unlike" indicates already liked
+        'button[aria-label*="Like"].active',
+        'button[aria-label*="Like"].selected',
+        'button.artdeco-button--primary[aria-label*="Like"]',
+        '.social-action-bar button[aria-pressed="true"][aria-label*="Like"]'
+    ];
+    
+    for (const selector of likeSelectors) {
+        const likeButton = container.querySelector(selector);
+        if (likeButton) {
+            const ariaLabel = likeButton.getAttribute('aria-label') || '';
+            const ariaPressed = likeButton.getAttribute('aria-pressed');
+            
+            if (ariaPressed === 'true' || ariaLabel.toLowerCase().includes('unlike')) {
+                console.log('Post already liked by current user');
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+// Enhanced comment status detection
+async function checkCommentStatus(container, commentText) {
+    const commentSelectors = [
+        '.comments-comment-item',
+        '.comments-comment-entity',
+        '.comment-entity', 
+        '.feed-shared-comment',
+        '[data-test-id="comment"]',
+        '.social-comment-entity'
+    ];
+    
+    const cleanCommentText = commentText.toLowerCase().trim();
+    
+    for (const selector of commentSelectors) {
+        const comments = container.querySelectorAll(selector);
+        console.log(`Checking ${comments.length} comments with selector: ${selector}`);
+        
+        for (const comment of comments) {
+            // Try to find the comment text content
+            const commentContent = extractCommentText(comment);
+            
+            if (commentContent) {
+                const cleanCommentContent = commentContent.toLowerCase().trim();
+                
+                // Check for exact match or very high similarity (95%+)
+                const similarity = calculateSimilarity(cleanCommentContent, cleanCommentText);
+                
+                if (similarity > 0.95 || cleanCommentContent === cleanCommentText) {
+                    console.log(`Found matching comment (${Math.round(similarity * 100)}% similarity):`, commentContent.substring(0, 100));
+                    return true;
+                }
+            }
+        }
+    }
+    
+    return false;
+}
+
+// Extract text content from comment element
+function extractCommentText(commentElement) {
+    const contentSelectors = [
+        '.comment-content',
+        '.comments-comment-item-content-text',
+        '.feed-shared-text',
+        '[data-test-id="comment-content"]',
+        '.comment-text'
+    ];
+    
+    for (const selector of contentSelectors) {
+        const contentEl = commentElement.querySelector(selector);
+        if (contentEl) {
+            return contentEl.textContent || contentEl.innerText || '';
+        }
+    }
+    
+    // Fallback to full element text
+    return commentElement.textContent || commentElement.innerText || '';
+}
+
+// Implement strict idempotency matrix
+async function processAccordingToMatrix(currentStatus, commentText, dryRun = false) {
+    const result = {
+        liked: false,
+        commented: false,
+        skipped: false,
+        status: '',
+        reason: ''
+    };
+    
+    console.log('Processing according to matrix:', currentStatus);
+    
+    if (dryRun) {
+        // Dry-run mode: simulate actions without actually performing them
+        console.log('DRY-RUN MODE: Simulating actions based on matrix');
+        
+        if (!currentStatus.isLiked && !currentStatus.hasCommented) {
+            result.liked = true; 
+            result.commented = true;
+            result.status = 'would like and comment (simulated)';
+        } else if (currentStatus.isLiked && !currentStatus.hasCommented) {
+            result.commented = true;
+            result.status = 'already liked, would comment (simulated)';
+            result.reason = 'already_liked';
+        } else if (!currentStatus.isLiked && currentStatus.hasCommented) {
+            result.liked = true;
+            result.status = 'would like, already commented (simulated)';
+            result.reason = 'already_commented';
+        } else {
+            result.skipped = true;
+            result.status = 'already liked and commented (simulated)';
+            result.reason = 'already_processed';
+        }
+        
+    } else {
+        // Normal operation mode
+        if (!currentStatus.isLiked && !currentStatus.hasCommented) {
+            // Neither liked nor commented → Like + Comment
+            console.log('Matrix: Neither liked nor commented → attempting both actions');
+            
+            const likeResult = await performLike(currentStatus.postContainer);
+            const commentResult = await performComment(currentStatus.postContainer, commentText);
+            
+            result.liked = likeResult.success;
+            result.commented = commentResult.success;
+            result.status = `${likeResult.message} ${commentResult.message}`.trim();
+            
+        } else if (currentStatus.isLiked && !currentStatus.hasCommented) {
+            // Liked only → Comment only
+            console.log('Matrix: Already liked → attempting comment only');
+            
+            const commentResult = await performComment(currentStatus.postContainer, commentText);
+            result.commented = commentResult.success;
+            result.status = `already liked, ${commentResult.message}`;
+            result.reason = 'already_liked';
+            
+        } else if (!currentStatus.isLiked && currentStatus.hasCommented) {
+            // Commented only → Like only
+            console.log('Matrix: Already commented → attempting like only');
+            
+            const likeResult = await performLike(currentStatus.postContainer);
+            result.liked = likeResult.success;
+            result.status = `${likeResult.message} already commented`;
+            result.reason = 'already_commented';
+            
+        } else {
+            // Both present → Skip entirely
+            console.log('Matrix: Both liked and commented → skipping entirely');
+            
+            result.skipped = true;
+            result.status = 'already liked and commented';
+            result.reason = 'already_processed';
+        }
+    }
+    
+    return result;
 }
 
 async function waitForLinkedInPage() {
@@ -84,102 +321,6 @@ async function waitForLinkedInPage() {
     await sleep(3000);
 }
 
-async function tryLikePost() {
-    try {
-        // Comprehensive like button selectors for current LinkedIn
-        const likeSelectors = [
-            // General like button patterns
-            'button[aria-label*="Like"]',
-            'button[aria-label*="like"]', 
-            'button[aria-label*="React Like"]',
-            '[data-control-name="like"]',
-            
-            // Specific LinkedIn patterns
-            '.reactions-menu button[aria-label*="Like"]',
-            '.social-actions-bar button[aria-label*="Like"]',
-            '.social-action-bar button[aria-label*="Like"]',
-            'button[data-test-id="like-button"]',
-            'button.artdeco-button[aria-label*="Like"]',
-            
-            // SVG-based like buttons
-            'button[aria-label*="Like"] svg',
-            'button:has(svg[data-test-id="thumbs-up-outline-medium"])',
-            'button:has(svg[data-test-id="thumbs-up-filled-medium"])',
-            
-            // Fallback patterns
-            'button[title*="Like"]',
-            'button[title*="like"]',
-            '.like-button',
-            '[data-tracking-control-name*="like"]'
-        ];
-        
-        console.log('Searching for like button...');
-        let likeButton = null;
-        
-        for (const selector of likeSelectors) {
-            try {
-                console.log('Trying like selector:', selector);
-                const buttons = document.querySelectorAll(selector);
-                console.log(`Found ${buttons.length} elements for selector:`, selector);
-                
-                for (const button of buttons) {
-                    const ariaPressed = button.getAttribute('aria-pressed');
-                    const ariaLabel = button.getAttribute('aria-label');
-                    
-                    console.log('Button details:', {
-                        selector,
-                        ariaLabel,
-                        ariaPressed,
-                        textContent: button.textContent.trim(),
-                        className: button.className
-                    });
-                    
-                    // Check if this is a like button - look for both pressed and unpressed states
-                    if (ariaLabel && ariaLabel.toLowerCase().includes('like')) {
-                        // Check if already liked
-                        if (ariaPressed === 'true' || ariaLabel.toLowerCase().includes('unlike') || 
-                            button.classList.contains('active') || button.classList.contains('selected')) {
-                            console.log('Post already liked - skipping');
-                            return 'already liked, ';
-                        }
-                        likeButton = button;
-                        console.log('Found like button:', button);
-                        break;
-                    }
-                }
-                if (likeButton) break;
-            } catch (e) {
-                console.log('Error with selector:', selector, e);
-            }
-        }
-        
-        if (likeButton) {
-            // Double check if already liked - this check was already done above
-            // Just proceed with clicking
-            
-            console.log('Clicking like button...');
-            likeButton.click();
-            await sleep(1500); // Wait for like to register
-            console.log('Like button clicked successfully');
-            return 'liked, ';
-        } else {
-            console.log('Like button not found. Available buttons:');
-            const allButtons = document.querySelectorAll('button');
-            for (let i = 0; i < Math.min(allButtons.length, 10); i++) {
-                const btn = allButtons[i];
-                console.log(`Button ${i}:`, {
-                    ariaLabel: btn.getAttribute('aria-label'),
-                    textContent: btn.textContent.trim(),
-                    className: btn.className
-                });
-            }
-            return 'like button not found, ';
-        }
-    } catch (error) {
-        console.error('Error liking post:', error);
-        return 'like failed: ' + error.message + ', ';
-    }
-}
 
 async function tryCommentPost(commentText) {
     try {
@@ -325,133 +466,10 @@ async function tryCommentPost(commentText) {
             return 'comment input not found';
         }
         
-        // Check if we already commented - look for our exact comment
-        console.log('Checking for existing comments...');
         
-        // Find the post container to scope our search
-        const postContainer = document.querySelector('[data-test-id="feed-shared-update-v2"], .feed-shared-update-v2, .share-update-v2, .single-post-view, [data-urn*="activity:"]') || document;
-        
-        const existingCommentSelectors = [
-            // Modern LinkedIn comment patterns
-            '.comments-comment-item',
-            '.comments-comment-entity', 
-            '.comment-entity',
-            '.feed-shared-comment',
-            '.social-comment-entity',
-            '[data-test-id="comment"]',
-            '.comments-comment-item-content',
-            '.comment-content',
-            '.comment-text'
-        ];
-        
-        // Use the full comment text for more accurate matching
-        const fullCommentText = commentText.toLowerCase().trim();
-        let foundExistingComment = false;
-        
-        // First, try to find comments by the current user
-        const userCommentSelectors = [
-            '[data-test-id="comment"] .comment-content',
-            '.comments-comment-item .comment-content', 
-            '.comments-comment-entity .comment-content',
-            '.comment-entity .comment-content'
-        ];
-        
-        console.log('Checking for our own existing comments first...');
-        for (const selector of userCommentSelectors) {
-            const comments = postContainer.querySelectorAll(selector);
-            console.log(`Checking ${comments.length} user comments with selector: ${selector}`);
-            
-            for (const comment of comments) {
-                const commentContent = comment.textContent.toLowerCase().trim();
-                // Check for exact match or substantial overlap (90% or more)
-                const similarity = calculateSimilarity(commentContent, fullCommentText);
-                
-                if (similarity > 0.9 || commentContent === fullCommentText) {
-                    console.log('Found existing comment with high similarity:', similarity, commentContent.substring(0, 100));
-                    foundExistingComment = true;
-                    break;
-                }
-            }
-            if (foundExistingComment) break;
-        }
-        
-        // If not found in user comments, check all comments with stricter matching
-        if (!foundExistingComment) {
-            console.log('Checking all comments for exact matches...');
-            for (const selector of existingCommentSelectors) {
-                const comments = postContainer.querySelectorAll(selector);
-                console.log(`Checking ${comments.length} all comments with selector: ${selector}`);
-                
-                for (const comment of comments) {
-                    const commentContent = comment.textContent.toLowerCase().trim();
-                    // Only match if it's exactly the same or 95%+ similar
-                    const similarity = calculateSimilarity(commentContent, fullCommentText);
-                    
-                    if (similarity > 0.95) {
-                        console.log('Found existing comment with exact match:', commentContent.substring(0, 100));
-                        foundExistingComment = true;
-                        break;
-                    }
-                }
-                if (foundExistingComment) break;
-            }
-        }
-        
-        if (foundExistingComment) {
-            console.log('Already commented with this text - skipping');
-            return 'already commented';
-        }
-        
-        // Focus and add the comment
+        // Add comment text using enhanced method
         console.log('Adding comment text...');
-        commentInput.focus();
-        
-        // Clear existing content and add new comment
-        commentInput.innerHTML = '';
-        commentInput.textContent = '';
-        
-        // Use more robust text insertion methods for LinkedIn's rich editors
-        if (commentInput.contentEditable === 'true') {
-            // For contenteditable elements, use document.execCommand or modern methods
-            commentInput.focus();
-            
-            // Clear and insert text
-            commentInput.innerHTML = '';
-            const textNode = document.createTextNode(commentText);
-            commentInput.appendChild(textNode);
-            
-            // Trigger comprehensive events for rich text editors
-            const events = [
-                new Event('focus', { bubbles: true }),
-                new Event('beforeinput', { bubbles: true, cancelable: true }),
-                new Event('keydown', { bubbles: true, cancelable: true }),
-                new Event('input', { bubbles: true, cancelable: true }),
-                new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: commentText }),
-                new Event('keyup', { bubbles: true }),
-                new Event('change', { bubbles: true }),
-                new Event('blur', { bubbles: true })
-            ];
-            
-            for (const event of events) {
-                commentInput.dispatchEvent(event);
-            }
-        } else {
-            // For regular input/textarea elements
-            commentInput.value = commentText;
-            commentInput.focus();
-            
-            const events = [
-                new Event('focus', { bubbles: true }),
-                new Event('input', { bubbles: true }),
-                new Event('keyup', { bubbles: true }),
-                new Event('change', { bubbles: true }),
-                new Event('blur', { bubbles: true })
-            ];
-            
-            for (const event of events) {
-                commentInput.dispatchEvent(event);
-            }
-        }
+        await addCommentText(commentInput, commentText);
         
         await sleep(1500);
         
@@ -569,6 +587,261 @@ async function tryCommentPost(commentText) {
     } catch (error) {
         console.error('Error commenting on post:', error);
         return 'comment failed: ' + error.message;
+    }
+}
+
+// Perform like action with enhanced detection and error handling
+async function performLike(container) {
+    const result = { success: false, message: 'like failed' };
+    
+    const likeSelectors = [
+        'button[aria-label*="Like"][aria-pressed="false"]',
+        'button[aria-label*="Like"]:not([aria-pressed="true"])',
+        'button[aria-label*="React Like"]',
+        '[data-control-name="like"]:not(.active)',
+        '.social-actions-bar button[aria-label*="Like"]',
+        '.social-action-bar button[aria-label*="Like"]',
+        'button.artdeco-button[aria-label*="Like"]:not(.artdeco-button--primary)'
+    ];
+    
+    for (const selector of likeSelectors) {
+        try {
+            const buttons = container.querySelectorAll(selector);
+            
+            for (const button of buttons) {
+                const ariaLabel = button.getAttribute('aria-label') || '';
+                const ariaPressed = button.getAttribute('aria-pressed');
+                
+                // Make sure this is an unliked like button
+                if (ariaLabel.toLowerCase().includes('like') && 
+                    ariaPressed !== 'true' && 
+                    !ariaLabel.toLowerCase().includes('unlike') &&
+                    button.offsetParent !== null) { // Check visibility
+                    
+                    console.log('Clicking like button:', button);
+                    button.click();
+                    
+                    // Wait and verify like was successful
+                    await sleep(2000);
+                    
+                    // Check if button state changed to indicate successful like
+                    const newAriaPressed = button.getAttribute('aria-pressed');
+                    const newAriaLabel = button.getAttribute('aria-label') || '';
+                    
+                    if (newAriaPressed === 'true' || newAriaLabel.toLowerCase().includes('unlike')) {
+                        result.success = true;
+                        result.message = 'liked';
+                        console.log('Like successful - button state changed');
+                        return result;
+                    }
+                }
+            }
+        } catch (e) {
+            console.log('Error with like selector:', selector, e);
+        }
+    }
+    
+    result.message = 'like button not found';
+    return result;
+}
+
+// Perform comment action with enhanced detection and error handling
+async function performComment(container, commentText) {
+    const result = { success: false, message: 'comment failed' };
+    
+    try {
+        // First, find and click comment button
+        const commentButton = await findCommentButton(container);
+        if (!commentButton) {
+            result.message = 'comment button not found';
+            return result;
+        }
+        
+        console.log('Clicking comment button...');
+        commentButton.click();
+        await sleep(2000);
+        
+        // Find comment input
+        const commentInput = await findCommentInput(container);
+        if (!commentInput) {
+            result.message = 'comment input not found';
+            return result;
+        }
+        
+        // Add comment text
+        console.log('Adding comment text...');
+        await addCommentText(commentInput, commentText);
+        await sleep(1500);
+        
+        // Find and click submit button
+        const submitButton = await findSubmitButton(container, commentInput);
+        if (!submitButton) {
+            result.message = 'submit button not found';
+            return result;
+        }
+        
+        console.log('Clicking submit button...');
+        submitButton.click();
+        await sleep(3000);
+        
+        result.success = true;
+        result.message = 'commented';
+        return result;
+        
+    } catch (error) {
+        console.error('Error in performComment:', error);
+        result.message = `comment error: ${error.message}`;
+        return result;
+    }
+}
+
+// Find comment button with enhanced selectors
+async function findCommentButton(container) {
+    const commentSelectors = [
+        'button[aria-label*="Comment"]',
+        'button[aria-label*="Add a comment"]',
+        'button[data-control-name="comment"]',
+        '.social-actions-bar button[aria-label*="Comment"]',
+        '.social-action-bar button[aria-label*="Comment"]',
+        'button:has(svg[data-test-id="comment-outline-medium"])'
+    ];
+    
+    for (const selector of commentSelectors) {
+        try {
+            const buttons = container.querySelectorAll(selector);
+            for (const button of buttons) {
+                const ariaLabel = button.getAttribute('aria-label') || '';
+                if (ariaLabel.toLowerCase().includes('comment') && button.offsetParent !== null) {
+                    return button;
+                }
+            }
+        } catch (e) {
+            console.log('Error with comment button selector:', selector, e);
+        }
+    }
+    
+    return null;
+}
+
+// Find comment input with enhanced selectors
+async function findCommentInput(container) {
+    // Wait for input to appear after clicking comment button
+    await sleep(1000);
+    
+    const inputSelectors = [
+        '[contenteditable="true"][aria-label*="comment"]',
+        '[contenteditable="true"][placeholder*="comment"]',
+        '.comments-comment-box__form [contenteditable="true"]',
+        '.comment-form__text-editor [contenteditable="true"]',
+        '.ql-editor[contenteditable="true"]',
+        '[role="textbox"][contenteditable="true"]',
+        'div[contenteditable="true"]:not([aria-label*="search"])'
+    ];
+    
+    for (const selector of inputSelectors) {
+        try {
+            const inputs = container.querySelectorAll(selector);
+            for (const input of inputs) {
+                if (input.offsetParent !== null) { // Check visibility
+                    return input;
+                }
+            }
+        } catch (e) {
+            console.log('Error with input selector:', selector, e);
+        }
+    }
+    
+    return null;
+}
+
+// Find submit button with enhanced selectors
+async function findSubmitButton(container, inputElement) {
+    const inputContainer = inputElement.closest('.comments-comment-box, .comment-compose-form, .comment-form, form') || container;
+    
+    const submitSelectors = [
+        'button[aria-label*="Post comment"]',
+        'button[aria-label*="Post your comment"]', 
+        'button[type="submit"]',
+        'button.artdeco-button--primary',
+        '.comment-form__submit-button',
+        'button[data-control-name*="comment"]'
+    ];
+    
+    for (const selector of submitSelectors) {
+        try {
+            const buttons = inputContainer.querySelectorAll(selector);
+            for (const button of buttons) {
+                const ariaLabel = button.getAttribute('aria-label') || '';
+                const textContent = button.textContent.toLowerCase().trim();
+                
+                const isSubmitButton = (
+                    ariaLabel.toLowerCase().includes('post') ||
+                    textContent.includes('post') ||
+                    button.type === 'submit'
+                );
+                
+                if (isSubmitButton && button.offsetParent !== null && !button.disabled) {
+                    return button;
+                }
+            }
+        } catch (e) {
+            console.log('Error with submit selector:', selector, e);
+        }
+    }
+    
+    return null;
+}
+
+// Enhanced comment text insertion
+async function addCommentText(commentInput, commentText) {
+    commentInput.focus();
+    
+    // Clear existing content
+    commentInput.innerHTML = '';
+    commentInput.textContent = '';
+    
+    if (commentInput.contentEditable === 'true') {
+        // For contenteditable elements
+        const textNode = document.createTextNode(commentText);
+        commentInput.appendChild(textNode);
+        
+        // Trigger comprehensive events
+        const events = [
+            new Event('focus', { bubbles: true }),
+            new Event('beforeinput', { bubbles: true, cancelable: true }),
+            new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: commentText }),
+            new Event('change', { bubbles: true }),
+            new Event('keyup', { bubbles: true })
+        ];
+        
+        for (const event of events) {
+            commentInput.dispatchEvent(event);
+        }
+    } else {
+        // For regular input elements
+        commentInput.value = commentText;
+        
+        const events = [
+            new Event('focus', { bubbles: true }),
+            new Event('input', { bubbles: true }),
+            new Event('change', { bubbles: true })
+        ];
+        
+        for (const event of events) {
+            commentInput.dispatchEvent(event);
+        }
+    }
+    
+    // Final cursor positioning
+    if (window.getSelection && document.createRange) {
+        const range = document.createRange();
+        const selection = window.getSelection();
+        if (commentInput.childNodes.length > 0) {
+            range.setStartAfter(commentInput.childNodes[commentInput.childNodes.length - 1]);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
     }
 }
 
