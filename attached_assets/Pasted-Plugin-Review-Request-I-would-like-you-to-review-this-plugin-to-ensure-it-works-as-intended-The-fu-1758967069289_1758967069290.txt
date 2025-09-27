@@ -1,0 +1,67 @@
+Plugin Review Request
+
+I would like you to review this plugin to ensure it works as intended. The functionality and requirements should be as follows:
+
+1. Input Handling
+
+The plugin should allow me to paste raw data into a text box.
+
+From this data, it must automatically extract all LinkedIn post URLs.
+
+2. URL Processing
+
+The plugin should open each extracted URL sequentially, one by one.
+
+For each post, it must verify whether the logged-in account has already liked or commented on the post.
+
+3. Interaction Logic
+
+If the post is neither liked nor commented, the plugin should perform both actions: like the post and submit a predefined comment.
+
+If the post is already liked but not commented, the plugin should skip the like and only add the comment.
+
+If the post is already commented but not liked, the plugin should skip the comment and only like the post.
+
+If the post is already both liked and commented, the plugin should skip that post entirely.
+
+4. Comment Content
+
+The comment text should come from a single input field within the plugin.
+
+The same content will be reused for commenting across all posts.
+
+5. Execution Control
+
+The plugin should apply a random delay (in seconds) while opening URLs and performing actions.
+
+This delay should be configurable through input fields in the plugin settings.
+
+6. User Interface (UI) Expectations
+
+The plugin UI should be very interactive, modern, and visually appealing.
+
+The design should be clean and intuitive, ensuring that even non-technical users can easily:
+
+Paste their data into the text box.
+
+Provide the comment text.
+
+Configure the delay settings.
+
+Use clear labels, tooltips, and confirmation messages to guide the user.
+
+Include a progress indicator (e.g., a counter showing how many URLs have been processed).
+
+Provide status feedback (e.g., “Liked and Commented”, “Skipped – Already Liked”, etc.) for transparency.
+
+7. Current Issue to Verify
+
+At present, the plugin does not appear to be commenting (or it is unclear whether it is doing so correctly). Please verify:
+
+That the plugin successfully opens each extracted URL one by one.
+
+That the like and comment logic follows the rules described above.
+
+That the random configurable delay between actions is working.
+
+That the UI is interactive and user-friendly, with proper feedback and progress tracking.

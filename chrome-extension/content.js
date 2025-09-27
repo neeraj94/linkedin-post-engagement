@@ -260,18 +260,32 @@ async function tryCommentPost(commentText) {
             // Primary comment input patterns
             '[contenteditable="true"][aria-label*="comment"]',
             '[contenteditable="true"][aria-label*="Comment"]',
+            '[contenteditable="true"][aria-label*="Add a comment"]',
+            '[contenteditable="true"][aria-label*="Write a comment"]',
+            '[contenteditable="true"][aria-label*="Share your thoughts"]',
             '[contenteditable="true"][placeholder*="comment"]',
             '[contenteditable="true"][placeholder*="Add a comment"]',
+            '[contenteditable="true"][placeholder*="Write a comment"]',
             
-            // LinkedIn specific patterns
-            '.ql-editor[contenteditable="true"]',
+            // Modern LinkedIn specific patterns
+            '.comments-comment-box__form [contenteditable="true"]',
+            '.comments-comment-box-comment__form [contenteditable="true"]',
+            '.comment-form__text-editor [contenteditable="true"]',
+            '.comment-box__form [contenteditable="true"]',
+            '.ql-editor[contenteditable="true"]', // Quill editor
             '[role="textbox"][contenteditable="true"]',
             '.comments-comment-texteditor [contenteditable="true"]',
             '.comment-compose-form [contenteditable="true"]',
             
+            // Data attribute patterns
+            '[data-test-id*="comment"][contenteditable="true"]',
+            '[data-control-name*="comment"][contenteditable="true"]',
+            '[data-placeholder*="comment"][contenteditable="true"]',
+            
             // Fallback patterns
             'div[contenteditable="true"]',
-            '[data-placeholder*="comment"]'
+            'textarea[aria-label*="comment"]',
+            'textarea[placeholder*="comment"]'
         ];
         
         console.log('Searching for comment input...');
@@ -352,27 +366,89 @@ async function tryCommentPost(commentText) {
         
         // Clear existing content and add new comment
         commentInput.innerHTML = '';
-        commentInput.textContent = commentText;
+        commentInput.textContent = '';
         
-        // Trigger multiple events to ensure LinkedIn recognizes the input
-        const events = ['input', 'keyup', 'change'];
-        for (const eventType of events) {
-            const event = new Event(eventType, { bubbles: true });
-            commentInput.dispatchEvent(event);
+        // Use more robust text insertion methods for LinkedIn's rich editors
+        if (commentInput.contentEditable === 'true') {
+            // For contenteditable elements, use document.execCommand or modern methods
+            commentInput.focus();
+            
+            // Clear and insert text
+            commentInput.innerHTML = '';
+            const textNode = document.createTextNode(commentText);
+            commentInput.appendChild(textNode);
+            
+            // Trigger comprehensive events for rich text editors
+            const events = [
+                new Event('focus', { bubbles: true }),
+                new Event('beforeinput', { bubbles: true, cancelable: true }),
+                new Event('keydown', { bubbles: true, cancelable: true }),
+                new Event('input', { bubbles: true, cancelable: true }),
+                new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: commentText }),
+                new Event('keyup', { bubbles: true }),
+                new Event('change', { bubbles: true }),
+                new Event('blur', { bubbles: true })
+            ];
+            
+            for (const event of events) {
+                commentInput.dispatchEvent(event);
+            }
+        } else {
+            // For regular input/textarea elements
+            commentInput.value = commentText;
+            commentInput.focus();
+            
+            const events = [
+                new Event('focus', { bubbles: true }),
+                new Event('input', { bubbles: true }),
+                new Event('keyup', { bubbles: true }),
+                new Event('change', { bubbles: true }),
+                new Event('blur', { bubbles: true })
+            ];
+            
+            for (const event of events) {
+                commentInput.dispatchEvent(event);
+            }
         }
         
         await sleep(1500);
         
-        // Look for submit/post button
+        // Find the comment container to scope our submit button search
+        const commentContainer = commentInput.closest('.comments-comment-box, .comment-compose-form, .comment-form, .comments-comment-entity, form') || document;
+        
+        // Look for submit/post button with comprehensive selectors (scoped to comment container)
         const submitSelectors = [
+            // Primary comment submit patterns
             'button[aria-label*="Post comment"]',
+            'button[aria-label*="Post your comment"]',
+            'button[aria-label*="Submit comment"]',
             'button[aria-label*="Post"]',
             'button[data-control-name="comment.post"]',
+            'button[data-control-name*="comment_submit"]',
+            'button[data-control-name*="comment"]',
+            
+            // Form and container-based selectors
             'button[type="submit"]',
             '.comment-compose-form button[type="submit"]',
             '.comments-comment-box button[aria-label*="Post"]',
+            '.comments-comment-entity button',
+            '.comments-comment-item button',
+            
+            // Modern LinkedIn UI patterns
+            'button.artdeco-button--primary',
+            'button.comments-comment-box__submit-button',
+            'button.comment-form__submit-button',
+            '.comment-form button[aria-label*="Post"]',
+            '.comment-box button[aria-label*="Post"]',
+            
+            // Generic button patterns near comment areas
             'button:has(span:contains("Post"))',
-            'button.artdeco-button--primary'
+            'button:has([data-control-name*="comment"])',
+            '[data-test-id*="comment"] button',
+            
+            // Backup patterns
+            'button[aria-label*="Share"]',
+            'button.artdeco-button[aria-label*="comment"]'
         ];
         
         console.log('Searching for submit button...');
@@ -381,17 +457,45 @@ async function tryCommentPost(commentText) {
         for (const selector of submitSelectors) {
             try {
                 console.log('Trying submit selector:', selector);
-                const buttons = document.querySelectorAll(selector);
+                const buttons = commentContainer.querySelectorAll(selector);
                 
                 for (const button of buttons) {
                     const ariaLabel = button.getAttribute('aria-label');
-                    const textContent = button.textContent.toLowerCase();
+                    const textContent = button.textContent.toLowerCase().trim();
+                    const dataControlName = button.getAttribute('data-control-name');
                     
-                    if ((ariaLabel && ariaLabel.toLowerCase().includes('post')) || 
-                        textContent.includes('post') || 
-                        textContent.includes('submit')) {
+                    // Check multiple criteria for submit buttons
+                    const isSubmitButton = (
+                        (ariaLabel && (
+                            ariaLabel.toLowerCase().includes('post') ||
+                            ariaLabel.toLowerCase().includes('submit') ||
+                            ariaLabel.toLowerCase().includes('comment')
+                        )) ||
+                        (textContent && (
+                            textContent.includes('post') || 
+                            textContent.includes('submit') ||
+                            textContent === 'post'
+                        )) ||
+                        (dataControlName && dataControlName.includes('comment')) ||
+                        button.type === 'submit'
+                    );
+                    
+                    // Also check if button is visible and enabled
+                    const isVisible = button.offsetParent !== null;
+                    const isEnabled = !button.disabled && !button.hasAttribute('disabled') && !button.getAttribute('aria-disabled');
+                    const computedStyle = window.getComputedStyle(button);
+                    const isStyleVisible = computedStyle.display !== 'none' && computedStyle.visibility !== 'hidden';
+                    
+                    if (isSubmitButton && isVisible && isEnabled && isStyleVisible) {
                         submitButton = button;
-                        console.log('Found submit button:', button);
+                        console.log('Found submit button:', {
+                            ariaLabel,
+                            textContent,
+                            dataControlName,
+                            visible: isVisible,
+                            enabled: isEnabled,
+                            element: button
+                        });
                         break;
                     }
                 }

@@ -129,29 +129,29 @@
     </div>
     
     <div class="form-group">
-        <label for="commentText">Comment Text:</label>
-        <textarea id="commentText" placeholder="Enter the comment you want to post on LinkedIn posts..."></textarea>
+        <label for="commentText" title="This text will be posted as a comment on each LinkedIn post">Comment Text:</label>
+        <textarea id="commentText" placeholder="Enter the comment you want to post on LinkedIn posts..." title="This comment will be used for all LinkedIn posts. Make it engaging and relevant!"></textarea>
     </div>
     
     <div class="form-group">
-        <label for="textInput">Text with LinkedIn URLs (will extract automatically):</label>
-        <textarea id="textInput" placeholder="Paste your text here (WhatsApp messages, etc.)&#10;Extension will automatically find LinkedIn URLs..."></textarea>
+        <label for="textInput" title="Paste any text containing LinkedIn URLs - the extension will automatically find and extract them">Text with LinkedIn URLs (will extract automatically):</label>
+        <textarea id="textInput" placeholder="Paste your text here (WhatsApp messages, etc.)&#10;Extension will automatically find LinkedIn URLs..." title="Paste text from any source (WhatsApp, emails, documents) and the extension will automatically find LinkedIn post URLs"></textarea>
     </div>
     
     <div class="form-group" style="display: flex; gap: 10px;">
         <div style="flex: 1;">
-            <label for="minDelay">Min Delay (seconds):</label>
-            <input type="number" id="minDelay" value="2" min="1" max="60">
+            <label for="minDelay" title="Minimum wait time between processing posts to appear natural">Min Delay (seconds):</label>
+            <input type="number" id="minDelay" value="2" min="1" max="60" title="Minimum seconds to wait between posts (recommended: 2-5 seconds)">
         </div>
         <div style="flex: 1;">
-            <label for="maxDelay">Max Delay (seconds):</label>
-            <input type="number" id="maxDelay" value="5" min="1" max="60">
+            <label for="maxDelay" title="Maximum wait time between processing posts - random delay will be chosen between min and max">Max Delay (seconds):</label>
+            <input type="number" id="maxDelay" value="5" min="1" max="60" title="Maximum seconds to wait between posts (recommended: 5-10 seconds)">
         </div>
     </div>
     
     <div class="button-group">
-        <button id="startBtn" class="start-btn">Start Automation</button>
-        <button id="stopBtn" class="stop-btn" style="display: none;">Stop</button>
+        <button id="startBtn" class="start-btn" title="Begin automatically liking and commenting on the LinkedIn posts">Start Automation</button>
+        <button id="stopBtn" class="stop-btn" style="display: none;" title="Stop the automation process immediately">Stop</button>
     </div>
     
     <div id="status" class="status idle">Ready to start</div>
