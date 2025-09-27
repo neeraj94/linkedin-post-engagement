@@ -325,34 +325,76 @@ async function tryCommentPost(commentText) {
             return 'comment input not found';
         }
         
-        // Check if we already commented - look more comprehensively
+        // Check if we already commented - look for our exact comment
         console.log('Checking for existing comments...');
+        
+        // Find the post container to scope our search
+        const postContainer = document.querySelector('[data-test-id="feed-shared-update-v2"], .feed-shared-update-v2, .share-update-v2, .single-post-view, [data-urn*="activity:"]') || document;
+        
         const existingCommentSelectors = [
-            '[data-test-id="comment"]',
-            '.comment-item', 
+            // Modern LinkedIn comment patterns
             '.comments-comment-item',
+            '.comments-comment-entity', 
             '.comment-entity',
-            '.social-comment-entity',
             '.feed-shared-comment',
-            '.comments-comment-v2'
+            '.social-comment-entity',
+            '[data-test-id="comment"]',
+            '.comments-comment-item-content',
+            '.comment-content',
+            '.comment-text'
         ];
         
-        const shortCommentText = commentText.substring(0, 30).toLowerCase().trim();
+        // Use the full comment text for more accurate matching
+        const fullCommentText = commentText.toLowerCase().trim();
         let foundExistingComment = false;
         
-        for (const selector of existingCommentSelectors) {
-            const comments = document.querySelectorAll(selector);
-            console.log(`Checking ${comments.length} existing comments with selector: ${selector}`);
+        // First, try to find comments by the current user
+        const userCommentSelectors = [
+            '[data-test-id="comment"] .comment-content',
+            '.comments-comment-item .comment-content', 
+            '.comments-comment-entity .comment-content',
+            '.comment-entity .comment-content'
+        ];
+        
+        console.log('Checking for our own existing comments first...');
+        for (const selector of userCommentSelectors) {
+            const comments = postContainer.querySelectorAll(selector);
+            console.log(`Checking ${comments.length} user comments with selector: ${selector}`);
             
             for (const comment of comments) {
                 const commentContent = comment.textContent.toLowerCase().trim();
-                if (commentContent.includes(shortCommentText)) {
-                    console.log('Found existing comment with matching text:', commentContent.substring(0, 100));
+                // Check for exact match or substantial overlap (90% or more)
+                const similarity = calculateSimilarity(commentContent, fullCommentText);
+                
+                if (similarity > 0.9 || commentContent === fullCommentText) {
+                    console.log('Found existing comment with high similarity:', similarity, commentContent.substring(0, 100));
                     foundExistingComment = true;
                     break;
                 }
             }
             if (foundExistingComment) break;
+        }
+        
+        // If not found in user comments, check all comments with stricter matching
+        if (!foundExistingComment) {
+            console.log('Checking all comments for exact matches...');
+            for (const selector of existingCommentSelectors) {
+                const comments = postContainer.querySelectorAll(selector);
+                console.log(`Checking ${comments.length} all comments with selector: ${selector}`);
+                
+                for (const comment of comments) {
+                    const commentContent = comment.textContent.toLowerCase().trim();
+                    // Only match if it's exactly the same or 95%+ similar
+                    const similarity = calculateSimilarity(commentContent, fullCommentText);
+                    
+                    if (similarity > 0.95) {
+                        console.log('Found existing comment with exact match:', commentContent.substring(0, 100));
+                        foundExistingComment = true;
+                        break;
+                    }
+                }
+                if (foundExistingComment) break;
+            }
         }
         
         if (foundExistingComment) {
@@ -560,6 +602,58 @@ function waitForElement(selector, timeout = 10000) {
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper function to calculate text similarity
+function calculateSimilarity(str1, str2) {
+    if (str1 === str2) return 1.0;
+    if (str1.length === 0 || str2.length === 0) return 0.0;
+    
+    // Simple similarity based on common words and character overlap
+    const words1 = str1.split(/\s+/).filter(w => w.length > 2);
+    const words2 = str2.split(/\s+/).filter(w => w.length > 2);
+    
+    if (words1.length === 0 || words2.length === 0) {
+        // Character-based similarity for short texts
+        const longer = str1.length > str2.length ? str1 : str2;
+        const shorter = str1.length > str2.length ? str2 : str1;
+        const editDistance = levenshteinDistance(longer, shorter);
+        return (longer.length - editDistance) / longer.length;
+    }
+    
+    const commonWords = words1.filter(w => words2.includes(w));
+    const totalWords = Math.max(words1.length, words2.length);
+    
+    return commonWords.length / totalWords;
+}
+
+// Simple Levenshtein distance calculation
+function levenshteinDistance(str1, str2) {
+    const matrix = [];
+    
+    for (let i = 0; i <= str2.length; i++) {
+        matrix[i] = [i];
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+        matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+        for (let j = 1; j <= str1.length; j++) {
+            if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+                matrix[i][j] = matrix[i - 1][j - 1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j - 1] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j] + 1
+                );
+            }
+        }
+    }
+    
+    return matrix[str2.length][str1.length];
 }
 
 // Log when content script loads
