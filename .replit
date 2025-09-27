@@ -18,21 +18,17 @@ args = "Chrome Extension Server"
 name = "Chrome Extension Server"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 server.py"
 waitForPort = 5000
 
-[workflows.workflow.metadata]
-outputType = "webview"
-
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 40403
-externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
