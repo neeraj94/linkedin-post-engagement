@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const urlTimeout = document.getElementById('urlTimeout');
     const retryLimit = document.getElementById('retryLimit');
     const dryRunCheckbox = document.getElementById('dryRun');
+    const enableLikeCheckbox = document.getElementById('enableLike');
+    const enableCommentCheckbox = document.getElementById('enableComment');
     
     const startBtn = document.getElementById('startBtn');
     const pauseBtn = document.getElementById('pauseBtn');
@@ -52,7 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function loadSavedData() {
         chrome.storage.sync.get([
             'commentText', 'textInput', 'minDelay', 'maxDelay', 
-            'urlTimeout', 'retryLimit', 'dryRun'
+            'urlTimeout', 'retryLimit', 'dryRun', 'enableLike', 'enableComment'
         ], function(data) {
             if (data.commentText) commentText.value = data.commentText;
             if (data.textInput) {
@@ -64,6 +66,8 @@ document.addEventListener('DOMContentLoaded', function() {
             urlTimeout.value = data.urlTimeout || 30;
             retryLimit.value = data.retryLimit || 2;
             dryRunCheckbox.checked = data.dryRun || false;
+            enableLikeCheckbox.checked = data.enableLike !== false;
+            enableCommentCheckbox.checked = data.enableComment !== false;
         });
     }
 
@@ -96,6 +100,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
         dryRunCheckbox.addEventListener('change', () => {
             chrome.storage.sync.set({dryRun: dryRunCheckbox.checked});
+        });
+
+        enableLikeCheckbox.addEventListener('change', () => {
+            chrome.storage.sync.set({enableLike: enableLikeCheckbox.checked});
+        });
+
+        enableCommentCheckbox.addEventListener('change', () => {
+            chrome.storage.sync.set({enableComment: enableCommentCheckbox.checked});
         });
 
         // Control button listeners
@@ -150,10 +162,17 @@ document.addEventListener('DOMContentLoaded', function() {
         const urlTimeoutVal = parseInt(urlTimeout.value) || 30;
         const retryLimitVal = parseInt(retryLimit.value) || 2;
         const isDryRun = dryRunCheckbox.checked;
+        const shouldLike = enableLikeCheckbox.checked;
+        const shouldComment = enableCommentCheckbox.checked;
 
         // Validation
-        if (!comment && !isDryRun) {
-            updateStatus('Please enter a comment text or enable dry-run mode', 'error');
+        if (!shouldLike && !shouldComment) {
+            updateStatus('Please select at least one action: Like or Comment', 'error');
+            return;
+        }
+
+        if (!comment && shouldComment && !isDryRun) {
+            updateStatus('Please enter a comment text or disable commenting', 'error');
             return;
         }
 
@@ -188,7 +207,9 @@ document.addEventListener('DOMContentLoaded', function() {
             maxDelay: maxDelayVal,
             urlTimeout: urlTimeoutVal,
             retryLimit: retryLimitVal,
-            dryRun: isDryRun
+            dryRun: isDryRun,
+            enableLike: shouldLike,
+            enableComment: shouldComment
         });
     }
 

@@ -16,11 +16,18 @@ const ERROR_CODES = {
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     if (message.action === 'processPost') {
         console.log('Content script received processPost message:', message);
-        processLinkedInPost(message.comment, message.index, message.urlTimeout || 30, message.dryRun || false);
+        processLinkedInPost(
+            message.comment, 
+            message.index, 
+            message.urlTimeout || 30, 
+            message.dryRun || false,
+            message.enableLike !== false,
+            message.enableComment !== false
+        );
     }
 });
 
-async function processLinkedInPost(commentText, index, timeout = 30, dryRun = false) {
+async function processLinkedInPost(commentText, index, timeout = 30, dryRun = false, enableLike = true, enableComment = true) {
     if (isProcessing) {
         console.log('Already processing, skipping...');
         return;
@@ -28,6 +35,7 @@ async function processLinkedInPost(commentText, index, timeout = 30, dryRun = fa
     
     isProcessing = true;
     console.log(`Starting to process LinkedIn post with ${timeout}s timeout...`);
+    console.log(`Action preferences: Like=${enableLike}, Comment=${enableComment}`);
     
     // Set up timeout for this processing
     processingTimeout = setTimeout(() => {
@@ -51,7 +59,7 @@ async function processLinkedInPost(commentText, index, timeout = 30, dryRun = fa
         console.log('Current post status:', currentStatus);
         
         // Implement strict idempotency matrix
-        const result = await processAccordingToMatrix(currentStatus, commentText, dryRun);
+        const result = await processAccordingToMatrix(currentStatus, commentText, dryRun, enableLike, enableComment);
         
         sendResult(result);
         
@@ -153,7 +161,7 @@ async function checkLikeStatus(container) {
     return false;
 }
 
-// Enhanced comment status detection
+// Enhanced comment status detection - checks if current user has already commented
 async function checkCommentStatus(container, commentText) {
     const commentSelectors = [
         '.comments-comment-item',
@@ -164,26 +172,124 @@ async function checkCommentStatus(container, commentText) {
         '.social-comment-entity'
     ];
     
-    const cleanCommentText = commentText.toLowerCase().trim();
+    // Get current user info to identify their comments
+    const currentUserInfo = await getCurrentUserInfo();
+    console.log('Current user info:', currentUserInfo);
     
     for (const selector of commentSelectors) {
         const comments = container.querySelectorAll(selector);
         console.log(`Checking ${comments.length} comments with selector: ${selector}`);
         
         for (const comment of comments) {
-            // Try to find the comment text content
-            const commentContent = extractCommentText(comment);
-            
-            if (commentContent) {
-                const cleanCommentContent = commentContent.toLowerCase().trim();
-                
-                // Check for exact match or very high similarity (95%+)
-                const similarity = calculateSimilarity(cleanCommentContent, cleanCommentText);
-                
-                if (similarity > 0.95 || cleanCommentContent === cleanCommentText) {
-                    console.log(`Found matching comment (${Math.round(similarity * 100)}% similarity):`, commentContent.substring(0, 100));
-                    return true;
+            // Check if this comment is from the current user
+            if (isCommentByCurrentUser(comment, currentUserInfo)) {
+                console.log('Found comment by current user - skipping post');
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+// Get current user info from LinkedIn page
+async function getCurrentUserInfo() {
+    const userInfo = {
+        profileUrl: null,
+        name: null,
+        miniProfileId: null
+    };
+    
+    // Try to find current user's profile link
+    const profileSelectors = [
+        'a.global-nav__primary-link-me-menu-trigger',
+        '.global-nav__me-photo',
+        '.global-nav__me img',
+        '[data-control-name="identity_profile_photo"]',
+        'a[href*="/in/"][href*="miniProfileUrn"]'
+    ];
+    
+    for (const selector of profileSelectors) {
+        const element = document.querySelector(selector);
+        if (element) {
+            const link = element.closest('a');
+            if (link) {
+                userInfo.profileUrl = link.href;
+                // Extract mini profile ID from URL if present
+                const miniProfileMatch = link.href.match(/miniProfileUrn=([^&]+)/);
+                if (miniProfileMatch) {
+                    userInfo.miniProfileId = decodeURIComponent(miniProfileMatch[1]);
                 }
+                console.log('Found current user profile URL:', userInfo.profileUrl);
+                break;
+            }
+        }
+    }
+    
+    // Try to get user name from navigation
+    const nameElement = document.querySelector('.global-nav__me-content .t-16.t-black.t-bold, .global-nav__me-content span');
+    if (nameElement) {
+        userInfo.name = nameElement.textContent.trim();
+        console.log('Found current user name:', userInfo.name);
+    }
+    
+    return userInfo;
+}
+
+// Check if a comment was made by the current user
+function isCommentByCurrentUser(commentElement, currentUserInfo) {
+    // Method 1: Check for "you" indicator in comment
+    const youIndicators = commentElement.querySelectorAll('[aria-label*="You"], .comments-post-meta__name-text a[aria-label*="You"]');
+    if (youIndicators.length > 0) {
+        console.log('Found "You" indicator in comment');
+        return true;
+    }
+    
+    // Method 2: Check comment author's profile link
+    const authorLinkSelectors = [
+        '.comments-post-meta__profile-link',
+        '.comments-comment-item__main-content a[href*="/in/"]',
+        '.comment-entity a[href*="/in/"]',
+        'a.comment-author-link',
+        '.comments-post-meta__name-text a'
+    ];
+    
+    for (const selector of authorLinkSelectors) {
+        const authorLink = commentElement.querySelector(selector);
+        if (authorLink && currentUserInfo.profileUrl) {
+            const authorHref = authorLink.href;
+            
+            // Extract base profile URLs for comparison
+            const currentProfileBase = currentUserInfo.profileUrl.split('?')[0].split('/').filter(p => p).pop();
+            const authorProfileBase = authorHref.split('?')[0].split('/').filter(p => p).pop();
+            
+            if (currentProfileBase && authorProfileBase && currentProfileBase === authorProfileBase) {
+                console.log('Found comment by current user (profile URL match)');
+                return true;
+            }
+            
+            // Check mini profile ID if available
+            if (currentUserInfo.miniProfileId) {
+                const authorMiniProfileMatch = authorHref.match(/miniProfileUrn=([^&]+)/);
+                if (authorMiniProfileMatch) {
+                    const authorMiniProfileId = decodeURIComponent(authorMiniProfileMatch[1]);
+                    if (authorMiniProfileId === currentUserInfo.miniProfileId) {
+                        console.log('Found comment by current user (mini profile ID match)');
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Method 3: Check author name if available
+    if (currentUserInfo.name) {
+        const authorNameElement = commentElement.querySelector('.comments-post-meta__name-text, .comment-author-name');
+        if (authorNameElement) {
+            const authorName = authorNameElement.textContent.trim();
+            if (authorName === currentUserInfo.name || authorName.includes(currentUserInfo.name)) {
+                console.log('Found comment by current user (name match)');
+                return true;
             }
         }
     }
@@ -212,8 +318,8 @@ function extractCommentText(commentElement) {
     return commentElement.textContent || commentElement.innerText || '';
 }
 
-// Implement strict idempotency matrix
-async function processAccordingToMatrix(currentStatus, commentText, dryRun = false) {
+// Implement strict idempotency matrix with action preferences
+async function processAccordingToMatrix(currentStatus, commentText, dryRun = false, enableLike = true, enableComment = true) {
     const result = {
         liked: false,
         commented: false,
@@ -223,67 +329,82 @@ async function processAccordingToMatrix(currentStatus, commentText, dryRun = fal
     };
     
     console.log('Processing according to matrix:', currentStatus);
+    console.log('Action preferences:', { enableLike, enableComment });
+    
+    // Determine what actions to attempt based on preferences and current status
+    const shouldAttemptLike = enableLike && !currentStatus.isLiked;
+    const shouldAttemptComment = enableComment && !currentStatus.hasCommented;
+    
+    // Check if post should be skipped entirely
+    if ((!enableLike || currentStatus.isLiked) && (!enableComment || currentStatus.hasCommented)) {
+        console.log('Post should be skipped based on preferences and current status');
+        result.skipped = true;
+        
+        if (!enableLike && !enableComment) {
+            result.status = 'skipped (no actions enabled)';
+            result.reason = 'no_actions_enabled';
+        } else if (currentStatus.isLiked && currentStatus.hasCommented) {
+            result.status = 'already liked and commented';
+            result.reason = 'already_processed';
+        } else if (currentStatus.isLiked && !enableComment) {
+            result.status = 'already liked (commenting disabled)';
+            result.reason = 'already_liked_commenting_disabled';
+        } else if (currentStatus.hasCommented && !enableLike) {
+            result.status = 'already commented (liking disabled)';
+            result.reason = 'already_commented_liking_disabled';
+        } else {
+            result.status = 'skipped';
+            result.reason = 'conditions_not_met';
+        }
+        
+        return result;
+    }
     
     if (dryRun) {
         // Dry-run mode: simulate actions without actually performing them
-        console.log('DRY-RUN MODE: Simulating actions based on matrix');
+        console.log('DRY-RUN MODE: Simulating actions based on matrix and preferences');
         
-        if (!currentStatus.isLiked && !currentStatus.hasCommented) {
+        if (shouldAttemptLike && shouldAttemptComment) {
             result.liked = true; 
             result.commented = true;
             result.status = 'would like and comment (simulated)';
-        } else if (currentStatus.isLiked && !currentStatus.hasCommented) {
-            result.commented = true;
-            result.status = 'already liked, would comment (simulated)';
-            result.reason = 'already_liked';
-        } else if (!currentStatus.isLiked && currentStatus.hasCommented) {
+        } else if (shouldAttemptLike) {
             result.liked = true;
-            result.status = 'would like, already commented (simulated)';
-            result.reason = 'already_commented';
-        } else {
-            result.skipped = true;
-            result.status = 'already liked and commented (simulated)';
-            result.reason = 'already_processed';
+            result.status = 'would like (simulated)';
+        } else if (shouldAttemptComment) {
+            result.commented = true;
+            result.status = 'would comment (simulated)';
         }
         
     } else {
         // Normal operation mode
-        if (!currentStatus.isLiked && !currentStatus.hasCommented) {
-            // Neither liked nor commented → Like + Comment
-            console.log('Matrix: Neither liked nor commented → attempting both actions');
-            
+        const actions = [];
+        
+        if (shouldAttemptLike) {
+            console.log('Attempting to like post...');
             const likeResult = await performLike(currentStatus.postContainer);
-            const commentResult = await performComment(currentStatus.postContainer, commentText);
-            
             result.liked = likeResult.success;
-            result.commented = commentResult.success;
-            result.status = `${likeResult.message} ${commentResult.message}`.trim();
-            
-        } else if (currentStatus.isLiked && !currentStatus.hasCommented) {
-            // Liked only → Comment only
-            console.log('Matrix: Already liked → attempting comment only');
-            
+            actions.push(likeResult.message);
+        }
+        
+        if (shouldAttemptComment) {
+            console.log('Attempting to comment on post...');
             const commentResult = await performComment(currentStatus.postContainer, commentText);
             result.commented = commentResult.success;
-            result.status = `already liked, ${commentResult.message}`;
+            actions.push(commentResult.message);
+        }
+        
+        result.status = actions.join(' ').trim();
+        
+        // Add reason if some actions were already done
+        if (enableLike && currentStatus.isLiked && !enableComment) {
             result.reason = 'already_liked';
-            
-        } else if (!currentStatus.isLiked && currentStatus.hasCommented) {
-            // Commented only → Like only
-            console.log('Matrix: Already commented → attempting like only');
-            
-            const likeResult = await performLike(currentStatus.postContainer);
-            result.liked = likeResult.success;
-            result.status = `${likeResult.message} already commented`;
+        } else if (enableComment && currentStatus.hasCommented && !enableLike) {
             result.reason = 'already_commented';
-            
-        } else {
-            // Both present → Skip entirely
-            console.log('Matrix: Both liked and commented → skipping entirely');
-            
-            result.skipped = true;
-            result.status = 'already liked and commented';
-            result.reason = 'already_processed';
+        } else if (currentStatus.isLiked && !shouldAttemptLike) {
+            result.reason = 'already_liked';
+        } else if (currentStatus.hasCommented && !shouldAttemptComment) {
+            result.reason = 'already_commented';
         }
     }
     

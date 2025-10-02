@@ -14,7 +14,7 @@ const ERROR_CODES = {
 // Use chrome.storage to persist state across service worker suspensions
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     if (message.action === 'startAutomation') {
-        startAutomation(message.comment, message.urls, message.minDelay, message.maxDelay, message.urlTimeout, message.retryLimit, message.dryRun);
+        startAutomation(message.comment, message.urls, message.minDelay, message.maxDelay, message.urlTimeout, message.retryLimit, message.dryRun, message.enableLike, message.enableComment);
     } else if (message.action === 'stopAutomation') {
         stopAutomation();
     } else if (message.action === 'pauseAutomation') {
@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     }
 });
 
-async function startAutomation(comment, urls, minDelay = 2, maxDelay = 5, urlTimeout = 30, retryLimit = 2, dryRun = false) {
+async function startAutomation(comment, urls, minDelay = 2, maxDelay = 5, urlTimeout = 30, retryLimit = 2, dryRun = false, enableLike = true, enableComment = true) {
     const state = await getStoredState();
     if (state.isRunning) {
         return;
@@ -50,6 +50,8 @@ async function startAutomation(comment, urls, minDelay = 2, maxDelay = 5, urlTim
         urlTimeout: urlTimeout,
         maxRetries: retryLimit,
         dryRun: dryRun,
+        enableLike: enableLike,
+        enableComment: enableComment,
         isPaused: false,
         activityLog: [],
         urlStatuses: new Array(urls.length).fill().map(() => ({ 
@@ -347,7 +349,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
                 comment: state.comment,
                 index: state.currentIndex,
                 urlTimeout: state.urlTimeout || 30,
-                dryRun: state.dryRun || false
+                dryRun: state.dryRun || false,
+                enableLike: state.enableLike !== false,
+                enableComment: state.enableComment !== false
             });
         } catch (error) {
             console.error('Error sending message to content script:', error);
@@ -392,7 +396,9 @@ chrome.tabs.onUpdated.addListener(async function(tabId, changeInfo, tab) {
                                 comment: currentState.comment,
                                 index: currentState.currentIndex,
                                 urlTimeout: currentState.urlTimeout || 30,
-                                dryRun: currentState.dryRun || false
+                                dryRun: currentState.dryRun || false,
+                                enableLike: currentState.enableLike !== false,
+                                enableComment: currentState.enableComment !== false
                             });
                         } catch (error) {
                             console.error('Error sending message to content script:', error);
